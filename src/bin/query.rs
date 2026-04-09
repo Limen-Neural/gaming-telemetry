@@ -14,9 +14,6 @@ fn main() -> Result<()> {
 
     println!("--- Analyzing {} with DuckDB ---", parquet_file);
 
-    // Register Parquet extension if needed (usually included in modern duckdb crate)
-    // conn.execute_batch("INSTALL parquet; LOAD parquet;")?;
-
     // Basic stats
     println!("\n[Summary Statistics]");
     let mut stmt = conn.prepare(&format!(
@@ -26,6 +23,9 @@ fn main() -> Result<()> {
             avg(temperature_c) as avg_temp,
             max(pcie_rx_kbps) as max_pcie_rx,
             max(pcie_tx_kbps) as max_pcie_tx,
+            avg(encoder_util_perc) as avg_enc,
+            avg(decoder_util_perc) as avg_dec,
+            sum(CASE WHEN mangohud_active THEN 1 ELSE 0 END) * 100.0 / count(*) as mangohud_presence_pct,
             count(*) as sample_count
          FROM read_parquet('{}')", 
         parquet_file
@@ -38,7 +38,10 @@ fn main() -> Result<()> {
         let avg_temp: f64 = row.get(2)?;
         let max_rx: u32 = row.get(3)?;
         let max_tx: u32 = row.get(4)?;
-        let count: i64 = row.get(5)?;
+        let avg_enc: f64 = row.get(5)?;
+        let avg_dec: f64 = row.get(6)?;
+        let mangohud_pct: f64 = row.get(7)?;
+        let count: i64 = row.get(8)?;
 
         println!("Samples: {}", count);
         println!("Avg Power: {:.2} W", avg_power / 1000.0);
@@ -46,6 +49,9 @@ fn main() -> Result<()> {
         println!("Avg Temp:  {:.1} C", avg_temp);
         println!("Max PCIe RX: {:.2} MB/s", max_rx as f64 / 1024.0);
         println!("Max PCIe TX: {:.2} MB/s", max_tx as f64 / 1024.0);
+        println!("Avg Encoder: {:.1}%", avg_enc);
+        println!("Avg Decoder: {:.1}%", avg_dec);
+        println!("MangoHud Active: {:.1}% of samples", mangohud_pct);
     }
 
     // Detecting "Inhibitory" Signals (Throttling)
