@@ -180,6 +180,10 @@ pub struct RuntimeThresholds {
     pub max_gpu_w: f64,
     pub max_vram_mb: f64,
     pub max_pcie_rx_mb_s: f64,
+    /// Minimum average CPU package power (W) that indicates active crowd-AI workload.
+    /// Nova Crowds drives dense NPC simulation on the CPU; values below this suggest
+    /// the crowd system is inactive or the session was captured outside a populated area.
+    pub avg_cpu_w: f64,
 }
 
 impl Default for RuntimeThresholds {
@@ -189,6 +193,7 @@ impl Default for RuntimeThresholds {
             max_gpu_w: 280.0,
             max_vram_mb: 10_000.0,
             max_pcie_rx_mb_s: 1_000.0,
+            avg_cpu_w: 80.0,
         }
     }
 }
@@ -201,6 +206,14 @@ pub struct RuntimeMetrics {
     pub max_vram_mb: f64,
     pub avg_pcie_rx_mb_s: f64,
     pub max_pcie_rx_mb_s: f64,
+    /// Average CPU package power in watts. Present only when the telemetry source
+    /// includes a `cpu_package_power_w` column, which captures the burst load driven
+    /// by Nova Crowds' NPC-AI and traversal simulation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_cpu_w: Option<f64>,
+    /// Peak CPU package power in watts across the captured session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_cpu_w: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -36,13 +36,19 @@ pub fn runtime_audit(
 
     match metrics {
         Ok(metrics) => {
-            let checks = [
+            // Core GPU/VRAM/PCIe checks, optionally extended with CPU when the column
+            // is present. Nova Crowds drives dense NPC-AI simulation on the CPU; elevated
+            // package power confirms the crowd system was active during the capture session.
+            let pass_count = [
                 metrics.avg_gpu_w >= thresholds.avg_gpu_w
                     || metrics.max_gpu_w >= thresholds.max_gpu_w,
                 metrics.max_vram_mb >= thresholds.max_vram_mb,
                 metrics.max_pcie_rx_mb_s >= thresholds.max_pcie_rx_mb_s,
-            ];
-            let pass_count = checks.into_iter().filter(|ok| *ok).count();
+            ]
+            .into_iter()
+            .chain(metrics.avg_cpu_w.map(|avg| avg >= thresholds.avg_cpu_w))
+            .filter(|ok| *ok)
+            .count();
             let verdict = if pass_count >= 2 {
                 ClaimVerdict::Pass
             } else {
@@ -51,11 +57,12 @@ pub fn runtime_audit(
 
             if debug {
                 eprintln!(
-                    "[verify_cyberpunk][debug] runtime metrics avg_gpu_w={} max_gpu_w={} max_vram_mb={} max_pcie_rx_mb_s={} verdict={:?}",
+                    "[verify_cyberpunk][debug] runtime metrics avg_gpu_w={} max_gpu_w={} max_vram_mb={} max_pcie_rx_mb_s={} avg_cpu_w={:?} verdict={:?}",
                     metrics.avg_gpu_w,
                     metrics.max_gpu_w,
                     metrics.max_vram_mb,
                     metrics.max_pcie_rx_mb_s,
+                    metrics.avg_cpu_w,
                     verdict
                 );
             }
@@ -99,10 +106,12 @@ fn parse_csv_metrics(path: &Path) -> Result<RuntimeMetrics, RuntimeAuditError> {
     let power_idx = find_header(&headers, &["gpu_power_w", "power_usage_mw"]);
     let vram_idx = find_header(&headers, &["vram_mb", "memory_used_mb"]);
     let pcie_idx = find_header(&headers, &["pcie_rx_mb_s", "pcie_rx_kbps"]);
+    let cpu_idx = find_header(&headers, &["cpu_package_power_w"]);
 
     let mut gpu = Vec::new();
     let mut vram = Vec::new();
     let mut pcie = Vec::new();
+    let mut cpu = Vec::new();
 
     for row in reader.records() {
         let row = row.map_err(|err| {
@@ -130,9 +139,12 @@ fn parse_csv_metrics(path: &Path) -> Result<RuntimeMetrics, RuntimeAuditError> {
                 value
             });
         }
+        if let Some(idx) = cpu_idx {
+            cpu.push(row.get(idx).unwrap_or("0").parse::<f64>().unwrap_or(0.0));
+        }
     }
 
-    build_metrics(gpu, vram, pcie)
+    build_metrics(gpu, vram, pcie, cpu)
 }
 
 fn parse_parquet_metrics(path: &Path) -> Result<RuntimeMetrics, RuntimeAuditError> {
@@ -209,13 +221,14 @@ fn parse_parquet_metrics(path: &Path) -> Result<RuntimeMetrics, RuntimeAuditErro
         .map(|value| value as f64 / 1024.0)
         .collect();
 
-    build_metrics(gpu, vram, pcie)
+    build_metrics(gpu, vram, pcie, Vec::new())
 }
 
 fn build_metrics(
     gpu: Vec<f64>,
     vram: Vec<f64>,
     pcie: Vec<f64>,
+    cpu: Vec<f64>,
 ) -> Result<RuntimeMetrics, RuntimeAuditError> {
     if gpu.is_empty() || vram.is_empty() || pcie.is_empty() {
         return Err(RuntimeAuditError::RuntimeParse(
@@ -224,6 +237,12 @@ fn build_metrics(
         ));
     }
 
+    let (avg_cpu_w, max_cpu_w) = if cpu.is_empty() {
+        (None, None)
+    } else {
+        (Some(average(&cpu)), Some(max(&cpu)))
+    };
+
     Ok(RuntimeMetrics {
         avg_gpu_w: average(&gpu),
         max_gpu_w: max(&gpu),
@@ -231,6 +250,8 @@ fn build_metrics(
         max_vram_mb: max(&vram),
         avg_pcie_rx_mb_s: average(&pcie),
         max_pcie_rx_mb_s: max(&pcie),
+        avg_cpu_w,
+        max_cpu_w,
     })
 }
 
@@ -253,14 +274,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn computes_runtime_metrics() {
+    fn computes_runtime_metrics_without_cpu() {
         let metrics = build_metrics(
             vec![200.0, 300.0],
             vec![10000.0, 12000.0],
             vec![1000.0, 1100.0],
+            vec![],
         )
         .unwrap();
         assert_eq!(metrics.max_gpu_w, 300.0);
         assert_eq!(metrics.max_vram_mb, 12000.0);
+        assert_eq!(metrics.avg_cpu_w, None);
+        assert_eq!(metrics.max_cpu_w, None);
+    }
+
+    #[test]
+    fn computes_runtime_metrics_with_cpu() {
+        let metrics = build_metrics(
+            vec![200.0, 300.0],
+            vec![10000.0, 12000.0],
+            vec![1000.0, 1100.0],
+            vec![140.0, 165.0],
+        )
+        .unwrap();
+        assert_eq!(metrics.max_gpu_w, 300.0);
+        assert_eq!(metrics.avg_cpu_w, Some(152.5));
+        assert_eq!(metrics.max_cpu_w, Some(165.0));
     }
 }

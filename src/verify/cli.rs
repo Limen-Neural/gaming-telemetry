@@ -61,6 +61,9 @@ fn parse_runtime_thresholds(input: &str) -> Result<RuntimeThresholds, String> {
     if let Some(v) = value.get("max_pcie_rx_mb_s").and_then(|v| v.as_f64()) {
         thresholds.max_pcie_rx_mb_s = v;
     }
+    if let Some(v) = value.get("avg_cpu_w").and_then(|v| v.as_f64()) {
+        thresholds.avg_cpu_w = v;
+    }
     Ok(thresholds)
 }
 
@@ -77,12 +80,13 @@ mod tests {
     #[test]
     fn parses_custom_thresholds() {
         let thresholds = parse_runtime_thresholds(
-            r#"{"avg_gpu_w":210,"max_gpu_w":290,"max_vram_mb":12000,"max_pcie_rx_mb_s":900}"#,
+            r#"{"avg_gpu_w":210,"max_gpu_w":290,"max_vram_mb":12000,"max_pcie_rx_mb_s":900,"avg_cpu_w":100}"#,
         )
         .unwrap();
         assert_eq!(thresholds.avg_gpu_w, 210.0);
         assert_eq!(thresholds.max_gpu_w, 290.0);
         assert_eq!(thresholds.max_vram_mb, 12000.0);
         assert_eq!(thresholds.max_pcie_rx_mb_s, 900.0);
+        assert_eq!(thresholds.avg_cpu_w, 100.0);
     }
 }
